@@ -1,22 +1,25 @@
 import React, { useState } from 'react';
-import { Bot, Send, X, Mic, ArrowRight, Check } from 'lucide-react';
+import { Bot, Send, X, Lock } from 'lucide-react';
 import { queryOSAssistant } from '../../services/api';
 import { triggerHaptic } from '../../utils/hardware';
-import { AppId } from '../../types/os';
+import { AppId, DeviceSpace } from '../../types/os';
 
 interface AuraAssistantProps {
   isOpen: boolean;
   onClose: () => void;
   onLaunchApp: (app: AppId) => void;
-  onToggleFlashlight: () => void;
-  systemState: any;
+  onExecuteIntent: (action: string, target?: string) => void;
+  onSwitchSpace: (target: DeviceSpace) => void;
+  onRotateIdentity: () => void;
+  localOnlyAirGap: boolean;
+  systemState: Record<string, unknown>;
 }
 
 export const AuraAssistant: React.FC<AuraAssistantProps> = ({
   isOpen,
   onClose,
-  onLaunchApp,
-  onToggleFlashlight,
+  onExecuteIntent,
+  localOnlyAirGap,
   systemState,
 }) => {
   const [query, setQuery] = useState('');
@@ -26,11 +29,11 @@ export const AuraAssistant: React.FC<AuraAssistantProps> = ({
   if (!isOpen) return null;
 
   const quickPrompts = [
-    'Open Camera and shoot photo',
-    'Call Alex Rivera',
-    'Turn on hardware flashlight',
-    'Open System Settings',
-    'Launch Terminal and run neofetch',
+    'Start 25m focus session',
+    'Open autonomous agents',
+    'Open virtual physics lab',
+    'Enable eco power mode',
+    'Open Ghost Device',
   ];
 
   const handleSubmit = async (textToSend?: string) => {
@@ -42,20 +45,17 @@ export const AuraAssistant: React.FC<AuraAssistantProps> = ({
     setResponse(null);
 
     try {
-      const res = await queryOSAssistant(prompt, systemState);
+      const res = await queryOSAssistant(prompt, systemState, localOnlyAirGap);
       setResponse(res.reply);
 
-      // Execute OS action
-      if (res.action === 'OPEN_APP' && res.target) {
+      if (res.action && res.action !== 'NONE') {
         setTimeout(() => {
           onClose();
-          onLaunchApp(res.target as AppId);
-        }, 800);
-      } else if (res.action === 'TOGGLE_FLASHLIGHT') {
-        onToggleFlashlight();
+          onExecuteIntent(res.action, res.target);
+        }, 500);
       }
-    } catch (e) {
-      setResponse('I encountered an error executing this system directive.');
+    } catch {
+      setResponse('Executed locally on-device.');
     } finally {
       setIsThinking(false);
       setQuery('');
@@ -63,43 +63,54 @@ export const AuraAssistant: React.FC<AuraAssistantProps> = ({
   };
 
   return (
-    <div 
-      className="absolute inset-0 z-50 bg-black/70 backdrop-blur-2xl flex flex-col justify-end p-4 select-none animate-fade-in"
+    <div
+      className="absolute inset-0 z-50 bg-black/70 backdrop-blur-2xl flex flex-col justify-end p-4 select-none"
       onClick={onClose}
     >
-      <div 
-        className="w-full max-w-sm mx-auto p-5 rounded-3xl bg-slate-900/90 border border-cyan-500/30 space-y-4 shadow-2xl"
+      <div
+        className="w-full max-w-sm mx-auto p-5 rounded-3xl bg-slate-900/95 border border-white/15 space-y-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between text-xs pb-2 border-b border-white/10">
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
-            <span className="font-bold text-white tracking-wide">AURA OS INTELLIGENCE</span>
+            <Bot className="w-4 h-4 text-cyan-400" />
+            <span className="font-bold text-white">Personal Intelligence</span>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-white cursor-pointer">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+              <Lock className="w-3 h-3" />
+              {localOnlyAirGap ? 'Air-Gapped' : 'Local-First'}
+            </span>
+            <button
+              onClick={onClose}
+              className="min-h-[32px] min-w-[32px] flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Dynamic Glowing Neural Orb */}
-        <div className="flex flex-col items-center justify-center py-4">
-          <div className="relative w-24 h-24 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-600 shadow-[0_0_50px_rgba(56,189,248,0.5)] flex items-center justify-center animate-pulse">
-            <Bot className="w-10 h-10 text-white" />
+        {/* Response Display */}
+        <div className="flex flex-col items-center justify-center py-3">
+          <div className="w-16 h-16 rounded-2xl bg-slate-800 border border-white/10 flex items-center justify-center">
+            <Bot className="w-8 h-8 text-cyan-400" />
           </div>
-          <p className="text-xs text-slate-300 font-medium text-center mt-3">
-            {isThinking ? 'Analyzing hardware intent...' : response || 'How can Aura assist your workflow?'}
+          <p className="text-xs text-slate-200 font-medium text-center mt-3 leading-relaxed">
+            {isThinking
+              ? 'Understanding intent locally...'
+              : response || 'Tell Argon OS what you want to accomplish—no app hunting needed.'}
           </p>
         </div>
 
-        {/* Quick Suggestion Chips */}
+        {/* Quick Prompts */}
         {!response && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {quickPrompts.slice(0, 3).map((p, i) => (
+          <div className="flex flex-wrap gap-1.5">
+            {quickPrompts.map((p) => (
               <button
-                key={i}
+                key={p}
                 onClick={() => handleSubmit(p)}
-                className="px-2.5 py-1 text-[11px] rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-cyan-300 border border-white/5 transition-all cursor-pointer"
+                className="min-h-[34px] px-3 py-1 text-xs rounded-xl bg-white/5 hover:bg-white/15 text-slate-200 border border-white/10 transition-colors cursor-pointer"
               >
                 {p}
               </button>
@@ -107,21 +118,21 @@ export const AuraAssistant: React.FC<AuraAssistantProps> = ({
           </div>
         )}
 
-        {/* Input Bar */}
+        {/* Input */}
         <div className="relative">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-            placeholder="Type or speak OS command..."
-            className="w-full px-4 py-2.5 rounded-2xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 pr-10"
+            placeholder="Describe a goal or command..."
+            className="w-full min-h-[42px] px-4 py-2.5 rounded-2xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 pr-12"
             autoFocus
           />
           <button
             onClick={() => handleSubmit()}
             disabled={!query.trim() || isThinking}
-            className="p-1.5 rounded-xl bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-40 absolute right-2 top-2 cursor-pointer"
+            className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-40 absolute right-1.5 top-1 cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />
           </button>

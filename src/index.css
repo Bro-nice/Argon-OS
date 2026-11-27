@@ -5,6 +5,8 @@
   :root {
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+    --os-accent: #22d3ee;
+    --os-accent-rgb: 34, 211, 238;
   }
 
   body {
@@ -30,24 +32,17 @@
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.45);
 }
 
-/* Glassmorphism helpers */
+/* Glassmorphism & surface helpers */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.7);
+  background: rgba(15, 23, 42, 0.72);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.glass-panel-light {
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-
 .glow-border {
-  box-shadow: 0 0 25px -5px rgba(56, 189, 248, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 25px -5px rgba(var(--os-accent-rgb), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }

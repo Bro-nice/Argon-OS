@@ -1,11 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Gamepad2, RotateCcw, Trophy, Zap } from 'lucide-react';
+import { DeviceSpace } from '../../types/os';
 import { triggerHaptic } from '../../utils/hardware';
+import { readSpaceData, writeSpaceData } from '../../utils/localVault';
 
-export const CyberRunnerApp: React.FC = () => {
+interface CyberRunnerAppProps {
+  deviceSpace?: DeviceSpace;
+}
+
+export const CyberRunnerApp: React.FC<CyberRunnerAppProps> = ({ deviceSpace = 'primary' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState(140);
+  const [highScore, setHighScore] = useState<number>(() =>
+    readSpaceData<number>(deviceSpace, 'runner_highscore', 140)
+  );
   const [gameOver, setGameOver] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -18,19 +26,7 @@ export const CyberRunnerApp: React.FC = () => {
     score: 0,
   });
 
-  const jump = () => {
-    if (!isPlaying) {
-      startGame();
-      return;
-    }
-    if (!gameState.current.isJumping) {
-      gameState.current.velocity = -11;
-      gameState.current.isJumping = true;
-      triggerHaptic(15);
-    }
-  };
-
-  const startGame = () => {
+  const startGame = useCallback(() => {
     gameState.current = {
       playerY: 180,
       velocity: 0,
@@ -43,7 +39,32 @@ export const CyberRunnerApp: React.FC = () => {
     setGameOver(false);
     setIsPlaying(true);
     triggerHaptic(20);
-  };
+  }, []);
+
+  const jump = useCallback(() => {
+    if (!isPlaying) {
+      startGame();
+      return;
+    }
+    if (!gameState.current.isJumping) {
+      gameState.current.velocity = -11;
+      gameState.current.isJumping = true;
+      triggerHaptic(15);
+    }
+  }, [isPlaying, startGame]);
+
+  // Keyboard support (Space / ArrowUp / W)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+        if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+        e.preventDefault();
+        jump();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [jump]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -67,14 +88,15 @@ export const CyberRunnerApp: React.FC = () => {
         state.isJumping = false;
       }
 
-      // Move obstacles
+      // Move obstacles (gradual speed scaling)
+      const speed = Math.min(7.5, 4.5 + state.score * 0.008);
       for (let i = 0; i < state.obstacles.length; i++) {
-        state.obstacles[i].x -= 4.5;
+        state.obstacles[i].x -= speed;
       }
 
       // Add new obstacle
       if (state.frame % 85 === 0) {
-        const height = 25 + Math.random() * 25;
+        const height = 24 + Math.random() * 26;
         state.obstacles.push({ x: 360, width: 22, height });
       }
 
@@ -83,7 +105,13 @@ export const CyberRunnerApp: React.FC = () => {
         state.obstacles.shift();
         state.score += 10;
         setScore(state.score);
-        if (state.score > highScore) setHighScore(state.score);
+        setHighScore((prev) => {
+          if (state.score > prev) {
+            writeSpaceData(deviceSpace, 'runner_highscore', state.score);
+            return state.score;
+          }
+          return prev;
+        });
       }
 
       // Collision detection
@@ -104,7 +132,6 @@ export const CyberRunnerApp: React.FC = () => {
       // Draw
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Floor line
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -112,7 +139,6 @@ export const CyberRunnerApp: React.FC = () => {
       ctx.lineTo(canvas.width, 210);
       ctx.stroke();
 
-      // Floor grid speed lines
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
       const offset = (state.frame * 4) % 40;
       for (let x = -offset; x < canvas.width; x += 40) {
@@ -122,14 +148,12 @@ export const CyberRunnerApp: React.FC = () => {
         ctx.stroke();
       }
 
-      // Draw Player (Neon Kinetic Runner)
       ctx.fillStyle = '#38bdf8';
       ctx.shadowColor = '#38bdf8';
       ctx.shadowBlur = 12;
       ctx.fillRect(playerBox.x, playerBox.y, playerBox.width, playerBox.height);
       ctx.shadowBlur = 0;
 
-      // Draw Obstacles (Cyber Spikes)
       ctx.fillStyle = '#f43f5e';
       ctx.shadowColor = '#f43f5e';
       ctx.shadowBlur = 10;
@@ -143,18 +167,17 @@ export const CyberRunnerApp: React.FC = () => {
 
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
-  }, [isPlaying, highScore]);
+  }, [isPlaying, deviceSpace]);
 
   return (
-    <div 
+    <div
       onClick={jump}
       className="flex-1 w-full h-full bg-slate-950 text-white flex flex-col justify-between p-4 select-none overflow-hidden cursor-pointer"
     >
-      {/* Header */}
       <div className="flex items-center justify-between pb-2 border-b border-white/10 text-xs">
         <div className="flex items-center gap-1.5 font-bold text-cyan-400">
           <Gamepad2 className="w-4 h-4" />
-          <span>CYBER RUNNER 120Hz</span>
+          <span>CYBER RUNNER</span>
         </div>
 
         <div className="flex items-center gap-4 font-mono">
@@ -162,39 +185,36 @@ export const CyberRunnerApp: React.FC = () => {
             <Trophy className="w-3.5 h-3.5" />
             {highScore}
           </span>
-          <span className="text-white font-bold text-sm tabular-nums">
-            Score: {score}
-          </span>
+          <span className="text-white font-bold text-sm tabular-nums">Score: {score}</span>
         </div>
       </div>
 
-      {/* Game Canvas Container */}
       <div className="my-auto flex flex-col items-center justify-center relative">
         <canvas
           ref={canvasRef}
           width={360}
           height={240}
-          className="rounded-2xl border border-cyan-500/30 bg-black/80 shadow-2xl w-full max-w-sm"
+          className="rounded-xl border border-cyan-500/30 bg-black/80 shadow-2xl w-full max-w-md"
         />
 
         {!isPlaying && !gameOver && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm rounded-2xl space-y-2">
-            <Zap className="w-10 h-10 text-cyan-400 animate-bounce" />
-            <span className="text-sm font-bold text-white">Tap Anywhere to Sprint</span>
-            <span className="text-[10px] text-slate-400 font-mono">120 FPS GPU Accelerated</span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm rounded-xl space-y-2">
+            <Zap className="w-9 h-9 text-cyan-400" />
+            <span className="text-sm font-bold text-white">Click or Press Space to Start</span>
+            <span className="text-[10px] text-slate-400 font-mono">GPU Canvas Loop · Local High Score</span>
           </div>
         )}
 
         {gameOver && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm rounded-2xl space-y-3">
-            <span className="text-base font-black text-rose-500">SYSTEM CRASH: GAME OVER</span>
-            <span className="text-xs font-mono text-white">Score: {score}</span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm rounded-xl space-y-3">
+            <span className="text-base font-bold text-rose-400">RUN ENDED</span>
+            <span className="text-xs font-mono text-white">Score: {score} · Best: {highScore}</span>
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 startGame();
               }}
-              className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-lg active:scale-95"
+              className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-lg active:scale-95"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Retry Run</span>
@@ -204,7 +224,7 @@ export const CyberRunnerApp: React.FC = () => {
       </div>
 
       <div className="text-center text-[10px] text-slate-500 font-mono">
-        Tap screen to leap over energy spikes · Synchronized with GPU
+        Click or press Space / ↑ to leap · Local space high score saved
       </div>
     </div>
   );

@@ -1,5 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Terminal as TerminalIcon } from 'lucide-react';
+import { DeviceSpace, FileItem, HardwareState, PrivacyProfile, ShieldStats } from '../../types/os';
+import { readSpaceData, writeSpaceData } from '../../utils/localVault';
+import { PRIMARY_DEFAULT_FILES, GHOST_DEFAULT_FILES } from './FilesApp';
+import { evaluateMathExpression, formatMathResult } from '../../utils/mathEngine';
+
+interface TerminalAppProps {
+  deviceSpace: DeviceSpace;
+  privacy: PrivacyProfile;
+  shieldStats: ShieldStats;
+  hardware?: HardwareState;
+  onSwitchSpace: (target: DeviceSpace) => void;
+  onBurnGhostDevice: () => void;
+}
 
 interface TerminalLine {
   id: string;
@@ -7,12 +20,53 @@ interface TerminalLine {
   text: string;
 }
 
-export const TerminalApp: React.FC = () => {
+const KNOWN_COMMANDS = [
+  'help',
+  'ls',
+  'cd',
+  'pwd',
+  'cat',
+  'touch',
+  'echo',
+  'rm',
+  'calc',
+  'whoami',
+  'shield',
+  'vault',
+  'ghost',
+  'shred',
+  'neofetch',
+  'uname',
+  'date',
+  'free',
+  'ps',
+  'history',
+  'clear',
+];
+
+export const TerminalApp: React.FC<TerminalAppProps> = ({
+  deviceSpace,
+  privacy,
+  shieldStats,
+  hardware,
+  onSwitchSpace,
+  onBurnGhostDevice,
+}) => {
   const [input, setInput] = useState('');
-  const [currentDir, setCurrentDir] = useState('/home/user');
+  const [cwd, setCwd] = useState('/Documents');
+  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState(-1);
   const [lines, setLines] = useState<TerminalLine[]>([
-    { id: '1', type: 'system', text: 'AetherOS Linux 6.12.4-aether-arm64 (tty1)' },
-    { id: '2', type: 'system', text: 'Formal capability-based microkernel. Type "help" or "neofetch".' },
+    {
+      id: '1',
+      type: 'system',
+      text: `Argon OS 1.0 Sovereign Shell (${deviceSpace === 'ghost' ? 'Ghost Enclave' : 'Primary Partition'})`,
+    },
+    {
+      id: '2',
+      type: 'system',
+      text: 'Linux-compatible userland. Type "help", "ls", "calc 2^8", or "neofetch". Up/Down for history.',
+    },
   ]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -21,113 +75,293 @@ export const TerminalApp: React.FC = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [lines]);
 
+  const getFiles = (): FileItem[] =>
+    readSpaceData<FileItem[]>(
+      deviceSpace,
+      'files',
+      deviceSpace === 'ghost' ? GHOST_DEFAULT_FILES : PRIMARY_DEFAULT_FILES
+    );
+
+  const saveFiles = (files: FileItem[]) => {
+    writeSpaceData(deviceSpace, 'files', files);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (cmdHistory.length === 0) return;
+      const nextIdx = historyIdx < cmdHistory.length - 1 ? historyIdx + 1 : historyIdx;
+      setHistoryIdx(nextIdx);
+      setInput(cmdHistory[nextIdx]);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIdx <= 0) {
+        setHistoryIdx(-1);
+        setInput('');
+      } else {
+        const nextIdx = historyIdx - 1;
+        setHistoryIdx(nextIdx);
+        setInput(cmdHistory[nextIdx]);
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const trimmed = input.trim().toLowerCase();
+      if (!trimmed) return;
+      const match = KNOWN_COMMANDS.find((c) => c.startsWith(trimmed));
+      if (match) setInput(`${match} `);
+    }
+  };
+
   const handleCommand = (e: React.FormEvent) => {
     e.preventDefault();
-    const cmd = input.trim();
-    if (!cmd) return;
+    const raw = input.trim();
+    if (!raw) return;
+
+    setCmdHistory((prev) => [raw, ...prev].slice(0, 50));
+    setHistoryIdx(-1);
 
     const newLines: TerminalLine[] = [
       ...lines,
-      { id: Date.now().toString(), type: 'input', text: `user@aether:${currentDir}$ ${cmd}` },
+      {
+        id: `${Date.now()}-in`,
+        type: 'input',
+        text: `${privacy.spoofedNodeName}:${cwd}$ ${raw}`,
+      },
     ];
 
-    const parts = cmd.split(' ');
+    // Handle simple redirection: echo text > filename
+    const redirectMatch = raw.match(/^echo\s+(.+?)\s*>\s*(\S+)$/i);
+    if (redirectMatch) {
+      const content = redirectMatch[1].replace(/^["']|["']$/g, '');
+      const fname = redirectMatch[2];
+      const files = getFiles();
+      const existing = files.find((f) => f.name === fname && f.path === cwd);
+      if (existing) {
+        saveFiles(
+          files.map((f) =>
+            f.id === existing.id
+              ? { ...f, content, sizeBytes: content.length, updatedAt: 'Modified' }
+              : f
+          )
+        );
+      } else {
+        saveFiles([
+          {
+            id: Date.now().toString(),
+            name: fname,
+            path: cwd === '/' ? '/Documents' : cwd,
+            type: 'document',
+            sizeBytes: content.length,
+            updatedAt: 'Created',
+            content,
+          },
+          ...files,
+        ]);
+      }
+      newLines.push({
+        id: `${Date.now()}-out`,
+        type: 'output',
+        text: `Wrote ${content.length} bytes to ${cwd}/${fname}`,
+      });
+      setLines(newLines);
+      setInput('');
+      return;
+    }
+
+    const parts = raw.split(/\s+/);
     const root = parts[0].toLowerCase();
+    const args = parts.slice(1);
+    const pushOut = (text: string, type: TerminalLine['type'] = 'output') =>
+      newLines.push({ id: `${Date.now()}-${Math.random()}`, type, text });
 
     switch (root) {
       case 'help':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: `AetherOS Shell Utilities:
-  neofetch    - Display system specs, kernel, and hardware branding
-  uname -a    - Print operating system & kernel architecture
-  ls          - List directory contents
-  pwd         - Print working directory
-  cd <dir>    - Change current directory
-  cat <file>  - Display file contents
-  top         - Process monitor and CPU core loads
-  free -m     - Memory and cache usage
-  ping <host> - Send ICMP packet probe
-  clear       - Clear screen buffer`,
-        });
-        break;
-
-      case 'neofetch':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: `        /\         user@aether-phone-one
-       /  \        ---------------------
-      /\   \       OS: AetherOS v15.2 LTS aarch64
-     /  \   \      Host: Aether Phone Pro (ARMv9.4)
-    /    \   \     Kernel: 6.12.4-aether-formal
-   /  /\  \   \    Uptime: 2 days, 14 hours
-  /__/  \__\___\   Shell: aether-sh 5.2.15
-                   Resolution: 1200x2640 @ 120Hz
-                   CPU: Aether Octa-Core (8) @ 3.40GHz
-                   Memory: 2480MiB / 12288MiB (20%)`,
-        });
-        break;
-
-      case 'uname':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: 'Linux aether-core 6.12.4-aether-arm64 #1 SMP PREEMPT_DYNAMIC GNU/Linux',
-        });
+        pushOut(`Filesystem & Shell:
+  ls, pwd, cd <dir>, cat <file>, touch <file>, echo "txt" > <file>, rm <file>
+Utilities & Hardware:
+  calc <expr>, date, uname -a, free, ps, history, clear
+Sovereign Privacy:
+  whoami, shield, vault, ghost, shred, neofetch`);
         break;
 
       case 'pwd':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: currentDir,
-        });
+        pushOut(cwd);
         break;
 
-      case 'ls':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: 'Documents  Photos  Downloads  Audio  kernel_specs_v15.pdf  main_kernel.rs',
-        });
+      case 'cd': {
+        const dest = args[0] || '/';
+        if (dest === '..' || dest === '/' || dest === '~') {
+          setCwd('/');
+        } else {
+          const clean = dest.startsWith('/') ? dest : `/${dest.replace(/^\.\//, '')}`;
+          setCwd(clean);
+        }
+        break;
+      }
+
+      case 'ls': {
+        const files = getFiles();
+        if (cwd === '/') {
+          pushOut('Documents/  Photos/  Downloads/  Audio/');
+        } else {
+          const inDir = files.filter((f) => f.path.toLowerCase() === cwd.toLowerCase());
+          if (inDir.length === 0) {
+            pushOut('(empty directory)');
+          } else {
+            pushOut(
+              inDir
+                .map((f) => `${f.type.padEnd(9)} ${String(f.sizeBytes).padStart(8)} B  ${f.name}`)
+                .join('\n')
+            );
+          }
+        }
+        break;
+      }
+
+      case 'touch': {
+        const fname = args[0];
+        if (!fname) {
+          pushOut('usage: touch <filename>', 'error');
+          break;
+        }
+        const files = getFiles();
+        const targetPath = cwd === '/' ? '/Documents' : cwd;
+        if (!files.some((f) => f.name === fname && f.path === targetPath)) {
+          saveFiles([
+            {
+              id: Date.now().toString(),
+              name: fname,
+              path: targetPath,
+              type: 'document',
+              sizeBytes: 0,
+              updatedAt: 'Just now',
+              content: '',
+            },
+            ...files,
+          ]);
+        }
+        pushOut(`Created ${targetPath}/${fname}`);
+        break;
+      }
+
+      case 'cat': {
+        const fname = args[0];
+        if (!fname) {
+          pushOut('usage: cat <filename>', 'error');
+          break;
+        }
+        const file = getFiles().find((f) => f.name === fname);
+        if (!file) {
+          pushOut(`cat: ${fname}: No such file in local partition`, 'error');
+        } else {
+          pushOut(file.content || `[Binary ${file.type}: ${file.sizeBytes} bytes]`);
+        }
+        break;
+      }
+
+      case 'rm': {
+        const fname = args[0];
+        if (!fname) {
+          pushOut('usage: rm <filename>', 'error');
+          break;
+        }
+        const files = getFiles();
+        const next = files.filter((f) => f.name !== fname);
+        if (next.length === files.length) {
+          pushOut(`rm: cannot remove '${fname}': No such file`, 'error');
+        } else {
+          saveFiles(next);
+          pushOut(`Removed ${fname}`);
+        }
+        break;
+      }
+
+      case 'echo':
+        pushOut(args.join(' ').replace(/^["']|["']$/g, ''));
         break;
 
-      case 'top':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: `Tasks: 84 total, 1 running, 83 sleeping
-%Cpu(s):  2.4 us,  1.1 sy,  0.0 ni, 96.5 id
-MiB Mem :  12288.0 total,   9808.0 free,   2480.0 used
-PID USER      PR  NI    VIRT    RES  %CPU  COMMAND
-101 root      20   0  184.2M  48.1M   1.2  aether-compositor
-104 user      20   0   92.4M  28.4M   0.8  synapse-assistant
-112 user      20   0  210.0M  62.1M   0.4  aura-audio-server`,
-        });
+      case 'calc': {
+        const expr = args.join(' ');
+        if (!expr) {
+          pushOut('usage: calc <expression>  (e.g. calc (12+8)*3)', 'error');
+          break;
+        }
+        try {
+          pushOut(formatMathResult(evaluateMathExpression(expr)));
+        } catch (err: any) {
+          pushOut(`calc error: ${err?.message || 'Invalid expression'}`, 'error');
+        }
+        break;
+      }
+
+      case 'date':
+        pushOut(new Date().toString());
         break;
 
       case 'free':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: `               total        used        free      shared  buff/cache   available
-Mem:           12288        2480        9120         140         688        9668
-Swap:           4096           0        4096`,
-        });
+        pushOut(
+          `Host RAM: ${hardware?.memoryTotalGb ?? 8} GB · JS Heap: ${
+            hardware?.jsHeapUsedMb ?? 42
+          } MB · Disk Quota: ${hardware?.storageQuotaGb ?? 64} GB`
+        );
         break;
 
-      case 'ping':
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'output',
-          text: `PING ${parts[1] || 'aetheros.org'} (104.21.48.12): 56 data bytes
-64 bytes from 104.21.48.12: icmp_seq=0 ttl=58 time=12.4 ms
-64 bytes from 104.21.48.12: icmp_seq=1 ttl=58 time=11.8 ms
---- ${parts[1] || 'aetheros.org'} ping statistics ---
-2 packets transmitted, 2 packets received, 0.0% packet loss`,
-        });
+      case 'ps':
+        pushOut(`PID  SERVICE                 STATE
+101  argon-intent-compositor  running (${hardware?.refreshRateHz ?? 60}Hz)
+102  shield-l4-firewall       ${privacy.shieldEnabled ? 'active' : 'paused'}
+103  local-enclave-vault      mounted (${deviceSpace})
+104  hardware-sensor-sync     active (${hardware?.cpuCores ?? 8} cores)`);
+        break;
+
+      case 'history':
+        pushOut(cmdHistory.slice().reverse().map((c, i) => ` ${i + 1}  ${c}`).join('\n') || '(empty)');
+        break;
+
+      case 'whoami':
+        pushOut(`Space: ${deviceSpace.toUpperCase()}
+Alias ID: ${privacy.spoofedDeviceId}
+MAC Mask: ${privacy.spoofedMacAddress}
+Timezone: ${privacy.spoofedTimezone}
+Cloud Sync: DISABLED (100% On-Device)`);
+        break;
+
+      case 'shield':
+        pushOut(`Argon OS Shield Firewall: ${privacy.shieldEnabled ? 'UP' : 'DOWN'} (${privacy.shieldLevel})
+Ads Blocked: ${shieldStats.adsBlocked}
+Trackers Blocked: ${shieldStats.trackersBlocked}
+Fingerprints Neutralized: ${shieldStats.fingerprintsNeutralized}
+Tor Onion Relay: ${privacy.torRouting ? 'ACTIVE' : 'STANDBY'}
+Air-Gap Local-Only: ${privacy.localOnlyAirGap ? 'ENFORCED' : 'OFF'}`);
+        break;
+
+      case 'vault':
+        pushOut(`Storage Policy: 100% On-Device Partition (${deviceSpace})
+External Telemetry: 0 bytes transmitted
+WebRTC Leak Guard: ${privacy.webrtcLeakGuard ? 'ACTIVE' : 'OFF'}`);
+        break;
+
+      case 'ghost':
+        onSwitchSpace(deviceSpace === 'ghost' ? 'primary' : 'ghost');
+        pushOut(`Switching partition to ${deviceSpace === 'ghost' ? 'Primary' : 'Ghost'} Device...`);
+        break;
+
+      case 'shred':
+        onBurnGhostDevice();
+        pushOut('Ghost partition overwritten with zeroes and new anonymous identity minted.');
+        break;
+
+      case 'neofetch':
+        pushOut(`OS: Argon OS 1.0 Sovereign (${deviceSpace} space)
+Host: ${hardware?.hostPlatform || 'Physical Host'} (${hardware?.cpuCores || 8} threads)
+Display: ${hardware?.screenWidth || 1440}x${hardware?.screenHeight || 900} @ ${hardware?.refreshRateHz || 60}Hz
+Identity: ${privacy.spoofedDeviceId}
+Shield: ${privacy.shieldLevel.toUpperCase()} (${shieldStats.adsBlocked + shieldStats.trackersBlocked} blocked)
+Storage: Local-Only On-Device Vault`);
+        break;
+
+      case 'uname':
+        pushOut('Linux argon-enclave 6.12.4-argon-sovereign #1 SMP aarch64 GNU/Linux');
         break;
 
       case 'clear':
@@ -136,11 +370,7 @@ Swap:           4096           0        4096`,
         return;
 
       default:
-        newLines.push({
-          id: (Date.now() + 1).toString(),
-          type: 'error',
-          text: `aether-sh: command not found: ${cmd}. Type "help" for commands.`,
-        });
+        pushOut(`argon-sh: command not found: ${root}. Type "help".`, 'error');
     }
 
     setLines(newLines);
@@ -148,17 +378,15 @@ Swap:           4096           0        4096`,
   };
 
   return (
-    <div className="flex-1 w-full h-full bg-slate-950 text-white flex flex-col justify-between p-4 select-none overflow-hidden font-mono text-xs">
-      {/* Top Header */}
+    <div className="flex-1 w-full h-full bg-[#070a10] text-white flex flex-col justify-between p-4 select-none overflow-hidden font-mono text-xs">
       <div className="flex items-center justify-between pb-2 border-b border-white/10">
         <div className="flex items-center gap-2">
-          <TerminalIcon className="w-4 h-4 text-cyan-400" />
-          <span className="font-bold text-white">aether@kernel:~#</span>
+          <TerminalIcon className="w-4 h-4 text-emerald-400" />
+          <span className="font-bold text-white truncate">{privacy.spoofedNodeName}@enclave</span>
         </div>
-        <span className="text-[10px] text-emerald-400">SESSION: TTY1</span>
+        <span className="text-[10px] text-emerald-400 uppercase">{deviceSpace} · bash</span>
       </div>
 
-      {/* Terminal Output */}
       <div className="flex-1 overflow-y-auto space-y-1.5 py-2">
         {lines.map((l) => (
           <div
@@ -169,7 +397,7 @@ Swap:           4096           0        4096`,
                 : l.type === 'error'
                 ? 'text-rose-400'
                 : l.type === 'system'
-                ? 'text-slate-400 italic'
+                ? 'text-slate-400'
                 : 'text-slate-200'
             }`}
           >
@@ -179,14 +407,14 @@ Swap:           4096           0        4096`,
         <div ref={bottomRef} />
       </div>
 
-      {/* Command Input Bar */}
       <form onSubmit={handleCommand} className="flex items-center gap-2 pt-2 border-t border-white/10">
-        <span className="text-emerald-400 select-none">user@aether:~$</span>
+        <span className="text-emerald-400 select-none">{cwd}$</span>
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="neofetch, top, ls, ping..."
+          onKeyDown={handleKeyDown}
+          placeholder="ls, cat, touch, echo, calc, neofetch..."
           className="flex-1 bg-transparent text-white focus:outline-none text-xs"
           autoFocus
         />

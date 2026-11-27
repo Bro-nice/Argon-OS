@@ -78,7 +78,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           <div className="py-16 text-center space-y-2">
             <CheckCircle2 className="w-10 h-10 text-slate-600 mx-auto" />
             <p className="text-sm font-semibold text-slate-300">All caught up</p>
-            <p className="text-xs text-slate-500">No new notifications in AetherOS</p>
+            <p className="text-xs text-slate-500">No new notifications in Argon OS</p>
           </div>
         ) : (
           <div className="space-y-2.5">

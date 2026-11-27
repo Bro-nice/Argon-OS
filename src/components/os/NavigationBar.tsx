@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Circle, Square } from 'lucide-react';
+import { ChevronLeft, Home, Layers, Search } from 'lucide-react';
 import { triggerHaptic } from '../../utils/hardware';
 
 interface NavigationBarProps {
@@ -7,6 +7,7 @@ interface NavigationBarProps {
   onHome: () => void;
   onBack: () => void;
   onRecents: () => void;
+  onLauncher?: () => void;
 }
 
 export const NavigationBar: React.FC<NavigationBarProps> = ({
@@ -14,14 +15,14 @@ export const NavigationBar: React.FC<NavigationBarProps> = ({
   onHome,
   onBack,
   onRecents,
+  onLauncher,
 }) => {
   return (
-    <nav 
+    <nav
       aria-label="System Navigation"
-      className="relative w-full h-8 flex items-center justify-center z-40 select-none pb-1 pointer-events-auto"
+      className="relative w-full h-10 flex items-center justify-center z-40 select-none bg-slate-950/75 border-t border-white/10 backdrop-blur-md pointer-events-auto"
     >
       {mode === 'gestures' ? (
-        /* Fluid Gesture Home Pill */
         <button
           onClick={() => {
             triggerHaptic(15);
@@ -32,44 +33,60 @@ export const NavigationBar: React.FC<NavigationBarProps> = ({
             triggerHaptic([20, 25]);
             onRecents();
           }}
-          className="w-32 h-1.5 rounded-full bg-white/60 hover:bg-white active:scale-95 transition-all cursor-pointer shadow-lg hover:shadow-cyan-500/20"
-          title="Tap for Home · Long click for App Switcher"
+          className="w-32 h-1.5 rounded-full bg-white/60 hover:bg-white active:scale-95 transition-all cursor-pointer shadow-lg"
+          title="Tap for Home · Right-click for App Switcher"
         />
       ) : (
-        /* Classic 3-Button Navigation Bar */
-        <div className="w-full max-w-xs flex items-center justify-around text-white/70">
+        <div className="w-full max-w-md flex items-center justify-around px-4 text-slate-300 text-xs">
           <button
             onClick={() => {
-              triggerHaptic(15);
+              triggerHaptic(10);
               onBack();
             }}
-            className="p-2 hover:text-white transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
             title="Back"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <ChevronLeft className="w-4 h-4" />
+            <span className="hidden sm:inline font-medium">Back</span>
+          </button>
+
+          <button
+            onClick={() => {
+              triggerHaptic(10);
+              onHome();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            title="Home Desktop"
+          >
+            <Home className="w-4 h-4" />
+            <span className="hidden sm:inline font-medium">Home</span>
           </button>
 
           <button
             onClick={() => {
               triggerHaptic(15);
-              onHome();
-            }}
-            className="p-2 hover:text-white transition-colors cursor-pointer"
-            title="Home"
-          >
-            <Circle className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              triggerHaptic(20);
               onRecents();
             }}
-            className="p-2 hover:text-white transition-colors cursor-pointer"
-            title="Recent Apps"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            title="Running Tasks & Split View"
           >
-            <Square className="w-4 h-4" />
+            <Layers className="w-4 h-4" />
+            <span className="hidden sm:inline font-medium">Tasks</span>
           </button>
+
+          {onLauncher && (
+            <button
+              onClick={() => {
+                triggerHaptic(10);
+                onLauncher();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/10 text-cyan-300 hover:text-cyan-200 transition-colors cursor-pointer"
+              title="Command Launcher (Ctrl+K)"
+            >
+              <Search className="w-4 h-4" />
+              <span className="hidden sm:inline font-medium">Launcher</span>
+            </button>
+          )}
         </div>
       )}
     </nav>
